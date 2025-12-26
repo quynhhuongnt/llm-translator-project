@@ -3,53 +3,47 @@ from google import genai
 import easyocr
 import numpy as np
 from PIL import Image
-from concurrent.futures import ThreadPoolExecutor
 import PyPDF2
-import io
-import os
 
-# =====================
+# ======================
 # CONFIG
-# =====================
+# ======================
 st.set_page_config(page_title="EN-VI Translator (Gemini)", layout="wide")
-
 MODEL_NAME = "models/gemini-1.0-pro"
 
-# =====================
-# API KEY
-# =====================
+# ======================
+# GEMINI CLIENT (SDK MỚI)
+# ======================
 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-# =====================
+# ======================
 # OCR
-# =====================
+# ======================
 @st.cache_resource
 def load_ocr():
     return easyocr.Reader(["en", "vi"], gpu=False)
 
-reader = load_ocr()
+ocr_reader = load_ocr()
 
-# =====================
+# ======================
 # UTILS
-# =====================
-def split_text(text, max_len=1500):
+# ======================
+def split_text(text, max_len=1200):
     words = text.split()
-    chunks, current = [], []
-    length = 0
+    chunks, cur, length = [], [], 0
     for w in words:
+        cur.append(w)
         length += len(w) + 1
-        current.append(w)
         if length >= max_len:
-            chunks.append(" ".join(current))
-            current, length = [], 0
-    if current:
-        chunks.append(" ".join(current))
+            chunks.append(" ".join(cur))
+            cur, length = [], 0
+    if cur:
+        chunks.append(" ".join(cur))
     return chunks
 
-
-# =====================
-# TRANSLATION (🔥 NO temperature, NO config)
-# =====================
+# ======================
+# TRANSLATION (🔥 SIMPLE & STABLE)
+# ======================
 def translate_chunk(chunk: str) -> str:
     prompt = (
         "Translate the following English text into Vietnamese.\n"
@@ -69,15 +63,14 @@ def translate_text(text: str) -> str:
     chunks = split_text(text)
     results = []
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
-        for r in executor.map(translate_chunk, chunks):
-            results.append(r)
+    for chunk in chunks:   # ❗ KHÔNG DÙNG THREAD
+        results.append(translate_chunk(chunk))
 
     return "\n".join(results)
 
-# =====================
+# ======================
 # UI
-# =====================
+# ======================
 st.title("🇬🇧➡🇻🇳 English – Vietnamese Translator (Gemini 1.0 Pro)")
 
 tab1, tab2, tab3 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh", "📄 PDF"])
@@ -98,18 +91,21 @@ with tab2:
         st.image(image, caption="Ảnh gốc", use_column_width=True)
 
         if st.button("OCR + Dịch"):
-            with st.spinner("Đang nhận dạng & dịch..."):
-                text = " ".join(reader.readtext(np.array(image), detail=0))
+            with st.spinner("Đang xử lý..."):
+                text = " ".join(
+                    ocr_reader.readtext(np.array(image), detail=0)
+                )
                 st.write(translate_text(text))
 
 # ---- PDF ----
 with tab3:
     pdf_file = st.file_uploader("Upload PDF (≤30 trang)", type=["pdf"])
     if pdf_file:
-        reader_pdf = PyPDF2.PdfReader(pdf_file)
+        reader = PyPDF2.PdfReader(pdf_file)
         text = ""
-        for page in reader_pdf.pages[:30]:
-            text += page.extract_text() + "\n"
+        for page in reader.pages[:30]:
+            if page.extract_text():
+                text += page.extract_text() + "\n"
 
         if st.button("Dịch PDF"):
             with st.spinner("Đang dịch PDF..."):
