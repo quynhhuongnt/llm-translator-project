@@ -1,7 +1,9 @@
 streamlit
-google-genai
+torch
+transformers
+sentencepiece
 easyocr
-opencv-python-headless
-pillow
+Pillow
 numpy
-pypdf2
+python-docx
+PyPDF2
