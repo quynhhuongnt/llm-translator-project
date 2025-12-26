@@ -84,10 +84,8 @@ def translate_chunk(chunk: str) -> str:
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
-            generation_config={
-                "temperature": 0.2,
-                "max_output_tokens": 2048
-            }
+            temperature=0.2,
+            max_output_tokens=2048
         )
         return response.text
     except Exception as e:
@@ -197,3 +195,4 @@ elif mode == "Tài liệu":
 
                 st.subheader("📘 Bản dịch")
                 st.write(translated)
+
