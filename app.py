@@ -4,18 +4,17 @@ import easyocr
 from PIL import Image
 import PyPDF2
 import docx
-import hashlib
 from concurrent.futures import ThreadPoolExecutor
 
 # =============================
 # PAGE CONFIG
 # =============================
 st.set_page_config(
-    page_title="EN → VI Translator (Gemini)",
+    page_title="EN → VI Translator (Gemini 1.0 Pro)",
     layout="wide"
 )
 
-st.title("🌐 English → Vietnamese Translator (Gemini – Optimized)")
+st.title("🌐 English → Vietnamese Translator (Gemini 1.0 Pro)")
 
 # =============================
 # LOAD SECRET
@@ -27,16 +26,16 @@ if "GEMINI_API_KEY" not in st.secrets:
 genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
 
 # =============================
-# MODEL CONFIG (FAST)
+# MODEL (STABLE)
 # =============================
-MODEL_NAME = "models/gemini-1.5-flash"
+MODEL_NAME = "models/gemini-1.0-pro"
 model = genai.GenerativeModel(MODEL_NAME)
 
 # =============================
-# CONSTANTS
+# CONSTANTS (SAFE)
 # =============================
-MAX_CHARS = 1800        # an toàn cho Flash
-MAX_WORKERS = 4         # tránh rate-limit
+MAX_CHARS = 1500     # an toàn cho gemini-1.0-pro
+MAX_WORKERS = 2      # Streamlit Cloud ổn định
 
 # =============================
 # INIT OCR
@@ -48,13 +47,11 @@ def load_ocr():
 ocr_reader = load_ocr()
 
 # =============================
-# UTILS
+# TEXT CHUNKING
 # =============================
-def text_hash(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8")).hexdigest()
-
 def chunk_text(text: str):
     chunks, current = [], ""
+
     for para in text.split("\n"):
         para = para.strip()
         if not para:
@@ -74,28 +71,29 @@ def chunk_text(text: str):
 # =============================
 # TRANSLATION (SAFE)
 # =============================
-@st.cache_data(show_spinner=False)
-def translate_chunk(chunk: str):
+def translate_chunk(chunk: str) -> str:
     if not chunk or len(chunk.strip()) < 5:
         return ""
 
     prompt = (
-        "Translate English to Vietnamese.\n"
-        "Keep meaning accurate and natural.\n\n"
+        "Translate the following English text into Vietnamese.\n"
+        "Keep the meaning accurate and natural.\n\n"
         f"Text:\n{chunk}"
     )
 
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": 0.2,
-            "max_output_tokens": 2048
-        }
-    )
+    try:
+        response = model.generate_content(
+            prompt,
+            generation_config={
+                "temperature": 0.2,
+                "max_output_tokens": 2048
+            }
+        )
+        return response.text
+    except Exception as e:
+        return f"❌ Error: {e}"
 
-    return response.text
-
-def translate_text(text: str):
+def translate_text(text: str) -> str:
     chunks = chunk_text(text)
     results = []
 
@@ -115,7 +113,7 @@ def resize_image(img: Image.Image, max_width=1200):
     return img
 
 @st.cache_data(show_spinner=False)
-def ocr_image(img: Image.Image):
+def ocr_image(img: Image.Image) -> str:
     img = resize_image(img)
     result = ocr_reader.readtext(img, detail=0)
     return " ".join(result)
@@ -123,16 +121,18 @@ def ocr_image(img: Image.Image):
 # =============================
 # DOCUMENT READERS
 # =============================
-def read_pdf(file):
+def read_pdf(file) -> str:
     reader = PyPDF2.PdfReader(file)
     text = ""
+
     for page in reader.pages:
         page_text = page.extract_text()
         if page_text:
             text += page_text + "\n"
+
     return text
 
-def read_docx(file):
+def read_docx(file) -> str:
     document = docx.Document(file)
     return "\n".join(p.text for p in document.paragraphs if p.text.strip())
 
@@ -154,6 +154,7 @@ if mode == "Văn bản":
         else:
             with st.spinner("Đang dịch..."):
                 result = translate_text(text)
+
             st.subheader("🇻🇳 Bản dịch")
             st.write(result)
 
@@ -203,7 +204,7 @@ elif mode == "Tài liệu":
             st.info(f"Số ký tự: {len(text)}")
 
             if st.button("🚀 Dịch tài liệu"):
-                with st.spinner("Đang dịch (song song, tối ưu tốc độ)..."):
+                with st.spinner("Đang dịch (ổn định, an toàn)..."):
                     translated = translate_text(text)
 
                 st.subheader("📘 Bản dịch")
