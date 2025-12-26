@@ -7,15 +7,14 @@ from PIL import Image
 import numpy as np
 import docx
 import PyPDF2
-from io import StringIO
+from io import StringIO, BytesIO
 
 # 1. CẤU HÌNH TRANG
 st.set_page_config(page_title="Deep Learning Translator", layout="wide", page_icon="🇬🇧🇻🇳")
 
-# 2. CSS
+# 2. CSS CUSTOM
 st.markdown("""
 <style>
-    //Input
     .stTextArea textarea { 
         font-size: 16px; 
         height: 300px; 
@@ -34,7 +33,6 @@ st.markdown("""
     }
     .stButton button:hover { background-color: #1557b0; color: white; }
     
-    // OUTPUT 
     .result-box { 
         border: 1px solid #d3d3d3; 
         border-radius: 0.5rem;      
@@ -63,18 +61,18 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-#  BACKEND
+# 3. BACKEND - XỬ LÝ MÔ HÌNH VÀ LOGIC
 
 @st.cache_resource
 def load_models():
-    # Load Model Dịch
+    # Load Model Dịch (EnViT5)
     model_name = "VietAI/envit5-translation"
     tokenizer = AutoTokenizer.from_pretrained(model_name)
     model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device)
     
-    # Load Model OCR
+    # Load Model OCR (EasyOCR)
     reader = easyocr.Reader(['en'], gpu=(device == "cuda"))
     
     return tokenizer, model, reader, device
@@ -102,6 +100,7 @@ def split_and_translate(text):
     translated_chunks = []
     temp_chunk = ""
     for chunk in chunks:
+        # Giới hạn token để tránh quá tải mô hình (khoảng 500 ký tự mỗi lần dịch)
         if len(temp_chunk) + len(chunk) < 500:
             temp_chunk += chunk + "\n"
         else:
@@ -127,24 +126,33 @@ def read_file(uploaded_file):
             text += para.text + "\n"
     return text
 
-# FRONTEND
+def create_docx(text):
+    """Hàm tạo file Word từ nội dung văn bản"""
+    doc = docx.Document()
+    for line in text.split('\n'):
+        doc.add_paragraph(line)
+    
+    bio = BytesIO()
+    doc.save(bio)
+    return bio.getvalue()
+
+# 4. FRONTEND - GIAO DIỆN NGƯỜI DÙNG
+
 st.title(" ỨNG DỤNG DỊCH ANH - VIỆT SỬ DỤNG MÔ HÌNH LLM ")
-st.markdown("Môn: Kĩ thuật học sâu và ứng dụng")
-st.markdown("Sinh viên thực hiện: Ngô Thị Quỳnh Hương ")
-st.markdown("Mã sinh viên: 99048 ")
+st.markdown("**Môn:** Kĩ thuật học sâu và ứng dụng")
+st.markdown("**Sinh viên thực hiện:** Ngô Thị Quỳnh Hương | **MSV:** 99048")
 
 tab_text, tab_image, tab_doc = st.tabs(["🔤 Văn Bản", "📸 Hình Ảnh", "📂 Tài Liệu"])
 
-# Biến lưu trạng thái
+# Khởi tạo session state
 if 'trans_text' not in st.session_state: st.session_state.trans_text = ""
 if 'trans_img' not in st.session_state: st.session_state.trans_img = ""
 if 'trans_doc' not in st.session_state: st.session_state.trans_doc = ""
 
-#TAB 1: VĂN BẢN
+# TAB 1: DỊCH VĂN BẢN TRỰC TIẾP
 with tab_text:
     st.write("") 
     c1, c2 = st.columns(2)
-    
     with c1:
         st.markdown('<span class="lang-header">TIẾNG ANH</span>', unsafe_allow_html=True)
         text_input = st.text_area("Input", height=300, placeholder="Nhập văn bản tiếng Anh tại đây...", label_visibility="collapsed")
@@ -154,7 +162,6 @@ with tab_text:
         result_content = st.session_state.trans_text if st.session_state.trans_text else ""
         st.markdown(f'<div class="result-box">{result_content}</div>', unsafe_allow_html=True)
 
-    # Nút dịch
     st.write("")
     if st.button("DỊCH VĂN BẢN", key="btn_text"):
         if text_input:
@@ -162,40 +169,37 @@ with tab_text:
                 st.session_state.trans_text = translate_text(text_input)
                 st.rerun()
 
-#TAB 2: HÌNH ẢNH
+# TAB 2: DỊCH QUA HÌNH ẢNH (OCR)
 with tab_image:
     st.write("")
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown('<span class="lang-header">TẢI ẢNH LÊN</span>', unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("", type=['png', 'jpg', 'jpeg'], key="upload_img", label_visibility="collapsed")
-        if uploaded_file:
-            image = Image.open(uploaded_file)
+        uploaded_img = st.file_uploader("", type=['png', 'jpg', 'jpeg'], key="upload_img", label_visibility="collapsed")
+        if uploaded_img:
+            image = Image.open(uploaded_img)
             st.image(image, caption="Ảnh gốc", use_container_width=True)
 
     with c2:
         st.markdown('<span class="lang-header">KẾT QUẢ DỊCH</span>', unsafe_allow_html=True)
-        content = st.session_state.trans_img if st.session_state.trans_img else ""
-        st.markdown(f'<div class="result-box">{content}</div>', unsafe_allow_html=True)
+        content_img = st.session_state.trans_img if st.session_state.trans_img else ""
+        st.markdown(f'<div class="result-box">{content_img}</div>', unsafe_allow_html=True)
     
     st.write("")
     if st.button("QUÉT & DỊCH ", key="btn_img"):
-        if uploaded_file:
+        if uploaded_img:
             with st.spinner("Đang nhận diện chữ và dịch..."):
                 img_np = np.array(image)
                 res = reader.readtext(img_np, detail=0)
                 extracted_text = " ".join(res)
                 translated = translate_text(extracted_text)
-                
-                st.session_state.trans_img = f"<b>TEXT NHẬN DIỆN:</b>\n{extracted_text}\n\n<b>BẢN DỊCH:</b>\n{translated}"
+                st.session_state.trans_img = f"VĂN BẢN NHẬN DIỆN:\n{extracted_text}\n\nBẢN DỊCH:\n{translated}"
                 st.rerun()
 
-# TAB 3: TÀI LIỆU
+# TAB 3: DỊCH TÀI LIỆU VÀ TẢI VỀ .DOCX
 with tab_doc:
     st.write("")
     c1, c2 = st.columns(2)
-
     with c1:
         st.markdown('<span class="lang-header">TẢI FILE (WORD/PDF/TXT)</span>', unsafe_allow_html=True)
         uploaded_doc = st.file_uploader("", type=['docx', 'pdf', 'txt'], key="upload_doc", label_visibility="collapsed")
@@ -205,7 +209,6 @@ with tab_doc:
     with c2:
         st.markdown('<span class="lang-header">NỘI DUNG DỊCH</span>', unsafe_allow_html=True)
         content_doc = st.session_state.trans_doc if st.session_state.trans_doc else "Kết quả sẽ hiện ở đây..."
-        # Chỉ hiện 1 phần nếu dài quá
         display_text = content_doc[:2000] + ("..." if len(content_doc) > 2000 else "")
         st.markdown(f'<div class="result-box">{display_text}</div>', unsafe_allow_html=True)
 
@@ -217,11 +220,13 @@ with tab_doc:
                 full_translated_text = split_and_translate(raw_text)
                 st.session_state.trans_doc = full_translated_text
                 st.rerun()
-                
+    
+    # Nút tải về dạng .docx
     if st.session_state.trans_doc:
+        docx_file = create_docx(st.session_state.trans_doc)
         st.download_button(
-            label="Tải bản dịch(.txt)",
-            data=st.session_state.trans_doc,
-            file_name="translated_document.txt",
-            mime="text/plain"
+            label="📄 Tải bản dịch (.docx)",
+            data=docx_file,
+            file_name="translated_document.docx",
+            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
