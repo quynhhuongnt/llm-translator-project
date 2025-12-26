@@ -76,7 +76,7 @@ def translate_chunk(chunk: str) -> str:
 
     prompt = (
         "Translate the following English text into Vietnamese.\n"
-        "Keep the meaning accurate and natural.\n\n"
+        "Keep the meaning accurate, fluent, and natural.\n\n"
         f"Text:\n{chunk}"
     )
 
@@ -84,12 +84,15 @@ def translate_chunk(chunk: str) -> str:
         response = client.models.generate_content(
             model=MODEL_NAME,
             contents=prompt,
-            temperature=0.2,
-            max_output_tokens=2048
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=2048
+            )
         )
         return response.text
     except Exception as e:
         return f"❌ Error: {e}"
+
 
 def translate_text(text: str) -> str:
     chunks = chunk_text(text)
@@ -195,4 +198,5 @@ elif mode == "Tài liệu":
 
                 st.subheader("📘 Bản dịch")
                 st.write(translated)
+
 
