@@ -1,202 +1,116 @@
 import streamlit as st
 from google import genai
 import easyocr
+import numpy as np
 from PIL import Image
-import PyPDF2
-import docx
 from concurrent.futures import ThreadPoolExecutor
+import PyPDF2
+import io
+import os
 
-# =============================
-# PAGE CONFIG
-# =============================
-st.set_page_config(
-    page_title="EN → VI Translator (Gemini 1.0 Pro)",
-    layout="wide"
-)
+# =====================
+# CONFIG
+# =====================
+st.set_page_config(page_title="EN-VI Translator (Gemini)", layout="wide")
 
-st.title("🌐 English → Vietnamese Translator (Gemini 1.0 Pro)")
-
-# =============================
-# LOAD SECRET
-# =============================
-if "GEMINI_API_KEY" not in st.secrets:
-    st.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets")
-    st.stop()
-
-client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
-
-# =============================
-# MODEL CONFIG
-# =============================
 MODEL_NAME = "models/gemini-1.0-pro"
 
-# =============================
-# CONSTANTS
-# =============================
-MAX_CHARS = 1500
-MAX_WORKERS = 2   # Cloud-safe
+# =====================
+# API KEY
+# =====================
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
-# =============================
-# OCR INIT
-# =============================
+# =====================
+# OCR
+# =====================
 @st.cache_resource
 def load_ocr():
-    return easyocr.Reader(['en'], gpu=False)
+    return easyocr.Reader(["en", "vi"], gpu=False)
 
-ocr_reader = load_ocr()
+reader = load_ocr()
 
-# =============================
-# CHUNKING
-# =============================
-def chunk_text(text: str):
-    chunks, current = [], ""
-
-    for para in text.split("\n"):
-        para = para.strip()
-        if not para:
-            continue
-
-        if len(current) + len(para) < MAX_CHARS:
-            current += para + "\n"
-        else:
-            chunks.append(current)
-            current = para + "\n"
-
-    if current.strip():
-        chunks.append(current)
-
+# =====================
+# UTILS
+# =====================
+def split_text(text, max_len=1500):
+    words = text.split()
+    chunks, current = [], []
+    length = 0
+    for w in words:
+        length += len(w) + 1
+        current.append(w)
+        if length >= max_len:
+            chunks.append(" ".join(current))
+            current, length = [], 0
+    if current:
+        chunks.append(" ".join(current))
     return chunks
 
-# =============================
-# TRANSLATION
-# =============================
-def translate_chunk(chunk: str) -> str:
-    if len(chunk.strip()) < 5:
-        return ""
 
+# =====================
+# TRANSLATION (🔥 NO temperature, NO config)
+# =====================
+def translate_chunk(chunk: str) -> str:
     prompt = (
         "Translate the following English text into Vietnamese.\n"
-        "Keep the meaning accurate, fluent, and natural.\n\n"
-        f"Text:\n{chunk}"
+        "Keep meaning accurate, fluent, and natural.\n\n"
+        f"{chunk}"
     )
 
-    try:
-        response = client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=2048
-            )
-        )
-        return response.text
-    except Exception as e:
-        return f"❌ Error: {e}"
+    response = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
+
+    return response.text
 
 
 def translate_text(text: str) -> str:
-    chunks = chunk_text(text)
+    chunks = split_text(text)
     results = []
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+    with ThreadPoolExecutor(max_workers=3) as executor:
         for r in executor.map(translate_chunk, chunks):
             results.append(r)
 
     return "\n".join(results)
 
-# =============================
-# OCR
-# =============================
-def resize_image(img: Image.Image, max_width=1200):
-    if img.width > max_width:
-        ratio = max_width / img.width
-        img = img.resize((max_width, int(img.height * ratio)))
-    return img
-
-@st.cache_data(show_spinner=False)
-def ocr_image(img: Image.Image) -> str:
-    img = resize_image(img)
-    result = ocr_reader.readtext(img, detail=0)
-    return " ".join(result)
-
-# =============================
-# DOCUMENT READERS
-# =============================
-def read_pdf(file) -> str:
-    reader = PyPDF2.PdfReader(file)
-    text = ""
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
-    return text
-
-def read_docx(file) -> str:
-    document = docx.Document(file)
-    return "\n".join(p.text for p in document.paragraphs if p.text.strip())
-
-# =============================
+# =====================
 # UI
-# =============================
-mode = st.selectbox(
-    "Chọn chế độ dịch",
-    ["Văn bản", "Hình ảnh", "Tài liệu"]
-)
+# =====================
+st.title("🇬🇧➡🇻🇳 English – Vietnamese Translator (Gemini 1.0 Pro)")
 
-# -------- TEXT --------
-if mode == "Văn bản":
+tab1, tab2, tab3 = st.tabs(["📝 Văn bản", "🖼️ Hình ảnh", "📄 PDF"])
+
+# ---- TEXT ----
+with tab1:
     text = st.text_area("Nhập văn bản tiếng Anh", height=250)
-
-    if st.button("🚀 Dịch"):
-        if len(text.strip()) < 5:
-            st.warning("⚠️ Nội dung quá ngắn")
-        else:
+    if st.button("Dịch văn bản"):
+        if text.strip():
             with st.spinner("Đang dịch..."):
-                result = translate_text(text)
-            st.subheader("🇻🇳 Bản dịch")
-            st.write(result)
+                st.write(translate_text(text))
 
-# -------- IMAGE --------
-elif mode == "Hình ảnh":
-    file = st.file_uploader("Upload ảnh", type=["png", "jpg", "jpeg"])
+# ---- IMAGE ----
+with tab2:
+    img_file = st.file_uploader("Upload ảnh", type=["png", "jpg", "jpeg"])
+    if img_file:
+        image = Image.open(img_file).convert("RGB")
+        st.image(image, caption="Ảnh gốc", use_column_width=True)
 
-    if file:
-        img = Image.open(file)
-        st.image(img, use_column_width=True)
+        if st.button("OCR + Dịch"):
+            with st.spinner("Đang nhận dạng & dịch..."):
+                text = " ".join(reader.readtext(np.array(image), detail=0))
+                st.write(translate_text(text))
 
-        if st.button("🚀 OCR + Dịch"):
-            with st.spinner("OCR ảnh..."):
-                extracted = ocr_image(img)
+# ---- PDF ----
+with tab3:
+    pdf_file = st.file_uploader("Upload PDF (≤30 trang)", type=["pdf"])
+    if pdf_file:
+        reader_pdf = PyPDF2.PdfReader(pdf_file)
+        text = ""
+        for page in reader_pdf.pages[:30]:
+            text += page.extract_text() + "\n"
 
-            if not extracted.strip():
-                st.warning("⚠️ Không nhận diện được văn bản")
-            else:
-                st.subheader("📄 Văn bản trích xuất")
-                st.write(extracted)
-
-                with st.spinner("Dịch..."):
-                    translated = translate_text(extracted)
-
-                st.subheader("🇻🇳 Bản dịch")
-                st.write(translated)
-
-# -------- DOCUMENT --------
-elif mode == "Tài liệu":
-    file = st.file_uploader("Upload PDF / DOCX", type=["pdf", "docx"])
-
-    if file:
-        text = read_pdf(file) if file.name.endswith(".pdf") else read_docx(file)
-
-        if len(text.strip()) < 50:
-            st.warning("⚠️ Không đọc được nội dung")
-        else:
-            st.info(f"Số ký tự: {len(text)}")
-
-            if st.button("🚀 Dịch tài liệu"):
-                with st.spinner("Đang dịch..."):
-                    translated = translate_text(text)
-
-                st.subheader("📘 Bản dịch")
-                st.write(translated)
-
-
+        if st.button("Dịch PDF"):
+            with st.spinner("Đang dịch PDF..."):
+                st.write(translate_text(text))
