@@ -1,7 +1,7 @@
-streamlit>=1.32.0
-google-genai>=0.3.0
+streamlit
+google-genai
 easyocr
+opencv-python-headless
 pillow
-PyPDF2
-python-docx
 numpy
+pypdf2
