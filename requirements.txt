@@ -1,7 +1,7 @@
-streamlit>=1.35.0
-google-generativeai>=0.7.0
+streamlit
+google-generativeai
 easyocr
-Pillow
-numpy
-python-docx
+pillow
 PyPDF2
+python-docx
+numpy
