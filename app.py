@@ -1,5 +1,5 @@
 import streamlit as st
-import google.generativeai as genai
+from google import genai
 import easyocr
 from PIL import Image
 import PyPDF2
@@ -23,22 +23,21 @@ if "GEMINI_API_KEY" not in st.secrets:
     st.error("❌ Missing GEMINI_API_KEY in Streamlit Secrets")
     st.stop()
 
-genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
+client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
 
 # =============================
-# MODEL (STABLE)
+# MODEL CONFIG
 # =============================
 MODEL_NAME = "models/gemini-1.0-pro"
-model = genai.GenerativeModel(MODEL_NAME)
 
 # =============================
-# CONSTANTS (SAFE)
+# CONSTANTS
 # =============================
-MAX_CHARS = 1500     # an toàn cho gemini-1.0-pro
-MAX_WORKERS = 2      # Streamlit Cloud ổn định
+MAX_CHARS = 1500
+MAX_WORKERS = 2   # Cloud-safe
 
 # =============================
-# INIT OCR
+# OCR INIT
 # =============================
 @st.cache_resource
 def load_ocr():
@@ -47,7 +46,7 @@ def load_ocr():
 ocr_reader = load_ocr()
 
 # =============================
-# TEXT CHUNKING
+# CHUNKING
 # =============================
 def chunk_text(text: str):
     chunks, current = [], ""
@@ -69,10 +68,10 @@ def chunk_text(text: str):
     return chunks
 
 # =============================
-# TRANSLATION (SAFE)
+# TRANSLATION
 # =============================
 def translate_chunk(chunk: str) -> str:
-    if not chunk or len(chunk.strip()) < 5:
+    if len(chunk.strip()) < 5:
         return ""
 
     prompt = (
@@ -82,8 +81,9 @@ def translate_chunk(chunk: str) -> str:
     )
 
     try:
-        response = model.generate_content(
-            prompt,
+        response = client.models.generate_content(
+            model=MODEL_NAME,
+            contents=prompt,
             generation_config={
                 "temperature": 0.2,
                 "max_output_tokens": 2048
@@ -98,8 +98,8 @@ def translate_text(text: str) -> str:
     results = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        for result in executor.map(translate_chunk, chunks):
-            results.append(result)
+        for r in executor.map(translate_chunk, chunks):
+            results.append(r)
 
     return "\n".join(results)
 
@@ -124,12 +124,10 @@ def ocr_image(img: Image.Image) -> str:
 def read_pdf(file) -> str:
     reader = PyPDF2.PdfReader(file)
     text = ""
-
     for page in reader.pages:
         page_text = page.extract_text()
         if page_text:
             text += page_text + "\n"
-
     return text
 
 def read_docx(file) -> str:
@@ -150,24 +148,20 @@ if mode == "Văn bản":
 
     if st.button("🚀 Dịch"):
         if len(text.strip()) < 5:
-            st.warning("⚠️ Nội dung quá ngắn để dịch")
+            st.warning("⚠️ Nội dung quá ngắn")
         else:
             with st.spinner("Đang dịch..."):
                 result = translate_text(text)
-
             st.subheader("🇻🇳 Bản dịch")
             st.write(result)
 
 # -------- IMAGE --------
 elif mode == "Hình ảnh":
-    file = st.file_uploader(
-        "Upload ảnh (PNG / JPG)",
-        type=["png", "jpg", "jpeg"]
-    )
+    file = st.file_uploader("Upload ảnh", type=["png", "jpg", "jpeg"])
 
     if file:
         img = Image.open(file)
-        st.image(img, caption="Ảnh gốc", use_column_width=True)
+        st.image(img, use_column_width=True)
 
         if st.button("🚀 OCR + Dịch"):
             with st.spinner("OCR ảnh..."):
@@ -179,7 +173,7 @@ elif mode == "Hình ảnh":
                 st.subheader("📄 Văn bản trích xuất")
                 st.write(extracted)
 
-                with st.spinner("Dịch sang tiếng Việt..."):
+                with st.spinner("Dịch..."):
                     translated = translate_text(extracted)
 
                 st.subheader("🇻🇳 Bản dịch")
@@ -187,24 +181,18 @@ elif mode == "Hình ảnh":
 
 # -------- DOCUMENT --------
 elif mode == "Tài liệu":
-    file = st.file_uploader(
-        "Upload PDF / DOCX (≤ 30 trang)",
-        type=["pdf", "docx"]
-    )
+    file = st.file_uploader("Upload PDF / DOCX", type=["pdf", "docx"])
 
     if file:
-        if file.name.endswith(".pdf"):
-            text = read_pdf(file)
-        else:
-            text = read_docx(file)
+        text = read_pdf(file) if file.name.endswith(".pdf") else read_docx(file)
 
         if len(text.strip()) < 50:
-            st.warning("⚠️ Không đọc được nội dung tài liệu")
+            st.warning("⚠️ Không đọc được nội dung")
         else:
             st.info(f"Số ký tự: {len(text)}")
 
             if st.button("🚀 Dịch tài liệu"):
-                with st.spinner("Đang dịch (ổn định, an toàn)..."):
+                with st.spinner("Đang dịch..."):
                     translated = translate_text(text)
 
                 st.subheader("📘 Bản dịch")
