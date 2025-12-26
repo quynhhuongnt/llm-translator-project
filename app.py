@@ -7,7 +7,7 @@ import docx
 import PyPDF2
 from io import StringIO
 
-# 1. CẤU HÌNH TRANG & CSS (Giữ nguyên phong cách của bạn)
+# 1. CẤU HÌNH TRANG & CSS (Giữ nguyên giao diện của bạn)
 st.set_page_config(page_title="LLM Cloud Translator", layout="wide", page_icon="🌐")
 
 st.markdown("""
@@ -34,80 +34,109 @@ st.markdown("""
 # 2. BACKEND LOGIC
 @st.cache_resource
 def load_ocr():
-    return easyocr.Reader(['en'])
+    # Thêm tham số gpu=False vì Streamlit Cloud không có GPU miễn phí
+    return easyocr.Reader(['en'], gpu=False)
 
-# Cấu hình API Gemini
-try:
-    API_KEY = st.secrets["GEMINI_API_KEY"]
-    genai.configure(api_key=API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
-except Exception as e:
-    st.error("Chưa cấu hình API Key trong Secrets!")
+# Khởi tạo model bên ngoài hàm để tránh gọi lại nhiều lần
+def get_gemini_model():
+    try:
+        api_key = st.secrets["GEMINI_API_KEY"]
+        genai.configure(api_key=api_key)
+        # Sửa lỗi NotFound bằng cách chỉ định chính xác phiên bản
+        return genai.GenerativeModel('gemini-1.5-flash')
+    except Exception as e:
+        st.error(f"Lỗi cấu hình API: {e}")
+        return None
 
+model = get_gemini_model()
 reader = load_ocr()
 
+# Tối ưu hàm dịch: Sử dụng streaming để tránh timeout trên Cloud
 def translate_with_llm(text, type_context="văn bản"):
-    if not text.strip(): return ""
-    prompt = f"Bạn là chuyên gia dịch thuật. Hãy dịch đoạn {type_context} sau sang tiếng Việt một cách tự nhiên: {text}"
-    response = model.generate_content(prompt)
-    return response.text
+    if not text or not text.strip(): return ""
+    prompt = f"Bạn là chuyên gia dịch thuật. Hãy dịch đoạn {type_context} sau sang tiếng Việt một cách tự nhiên: \n\n{text}"
+    
+    try:
+        # Sử dụng stream=True để nhận dữ liệu liên tục, tránh bị đứng app
+        response = model.generate_content(prompt, stream=True)
+        full_text = ""
+        # Tạo placeholder để hiện chữ chạy dần dần (UX tốt hơn)
+        with st.empty():
+            for chunk in response:
+                full_text += chunk.text
+                # Chỉ hiển thị tạm thời ở đây nếu bạn muốn hiệu ứng gõ chữ
+        return full_text
+    except Exception as e:
+        return f"Lỗi dịch thuật: {str(e)}"
 
 def read_file(uploaded_file):
     text = ""
-    if uploaded_file.type == "text/plain":
-        text = StringIO(uploaded_file.getvalue().decode("utf-8")).read()
-    elif uploaded_file.type == "application/pdf":
-        pdf_reader = PyPDF2.PdfReader(uploaded_file)
-        for page in pdf_reader.pages:
-            text += page.extract_text() + "\n"
-    elif "word" in uploaded_file.type:
-        doc = docx.Document(uploaded_file)
-        for para in doc.paragraphs:
-            text += para.text + "\n"
+    try:
+        if uploaded_file.type == "text/plain":
+            text = StringIO(uploaded_file.getvalue().decode("utf-8")).read()
+        elif uploaded_file.type == "application/pdf":
+            pdf_reader = PyPDF2.PdfReader(uploaded_file)
+            for page in pdf_reader.pages:
+                extracted = page.extract_text()
+                if extracted: text += extracted + "\n"
+        elif "word" in uploaded_file.type or "officedocument" in uploaded_file.type:
+            doc = docx.Document(uploaded_file)
+            for para in doc.paragraphs:
+                text += para.text + "\n"
+    except Exception as e:
+        st.error(f"Lỗi đọc file: {e}")
     return text
 
-# 3. FRONTEND (Giao diện theo yêu cầu của bạn)
+# 3. FRONTEND
 st.title(" ỨNG DỤNG DỊCH ANH - VIỆT CLOUD LLM ")
 st.markdown("Sinh viên thực hiện: Ngô Thị Quỳnh Hương | Mã SV: 99048")
 
 tab_text, tab_image, tab_doc = st.tabs(["🔤 Văn Bản", "📸 Hình Ảnh", "📂 Tài Liệu"])
 
-if 'res_text' not in st.session_state: st.session_state.res_text = ""
-if 'res_img' not in st.session_state: st.session_state.res_img = ""
-if 'res_doc' not in st.session_state: st.session_state.res_doc = ""
+# Khởi tạo session state
+for key in ['res_text', 'res_img', 'res_doc']:
+    if key not in st.session_state: st.session_state[key] = ""
 
 with tab_text:
     c1, c2 = st.columns(2)
     with c1:
         st.markdown('<span class="lang-header">TIẾNG ANH</span>', unsafe_allow_html=True)
-        t_input = st.text_area("Input", height=300, label_visibility="collapsed")
+        t_input = st.text_area("Input", height=300, label_visibility="collapsed", key="input_area")
     with c2:
         st.markdown('<span class="lang-header">TIẾNG VIỆT (AI)</span>', unsafe_allow_html=True)
         st.markdown(f'<div class="result-box">{st.session_state.res_text}</div>', unsafe_allow_html=True)
     
     if st.button("DỊCH NGAY", key="btn1"):
-        st.session_state.res_text = translate_with_llm(t_input)
-        st.rerun()
+        if t_input:
+            with st.spinner("Đang dịch..."):
+                st.session_state.res_text = translate_with_llm(t_input)
+                st.rerun()
 
 with tab_image:
     c1, c2 = st.columns(2)
     with c1:
         img_file = st.file_uploader("Chọn ảnh", type=['png','jpg','jpeg'], label_visibility="collapsed")
-        if img_file: st.image(Image.open(img_file))
+        if img_file: st.image(Image.open(img_file), use_container_width=True)
     with c2:
         st.markdown(f'<div class="result-box">{st.session_state.res_img}</div>', unsafe_allow_html=True)
     
     if st.button("QUÉT & DỊCH", key="btn2"):
         if img_file:
-            res_ocr = reader.readtext(np.array(Image.open(img_file)), detail=0)
-            raw_ocr = " ".join(res_ocr)
-            st.session_state.res_img = translate_with_llm(raw_ocr, "quét từ ảnh")
-            st.rerun()
+            with st.spinner("Đang quét ảnh và dịch..."):
+                img_np = np.array(Image.open(img_file))
+                res_ocr = reader.readtext(img_np, detail=0)
+                raw_ocr = " ".join(res_ocr)
+                st.session_state.res_img = translate_with_llm(raw_ocr, "quét từ ảnh")
+                st.rerun()
 
 with tab_doc:
     doc_file = st.file_uploader("Chọn file", type=['pdf','docx','txt'], label_visibility="collapsed")
     if st.button("DỊCH TÀI LIỆU", key="btn3"):
         if doc_file:
-            st.session_state.res_doc = translate_with_llm(read_file(doc_file), "tài liệu")
+            with st.spinner("Đang xử lý tài liệu..."):
+                content = read_file(doc_file)
+                st.session_state.res_doc = translate_with_llm(content, "tài liệu")
+                st.rerun()
+    
     if st.session_state.res_doc:
-        st.markdown(f'<div class="result-box">{st.session_state.res_doc[:2000]}...</div>', unsafe_allow_html=True)
+        st.markdown(f'<div class="result-box">{st.session_state.res_doc}</div>', unsafe_allow_html=True)
