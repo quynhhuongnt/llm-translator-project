@@ -1,9 +1,5 @@
 streamlit
-torch
-transformers
-sentencepiece
-easyocr
-Pillow
-numpy
-python-docx
-PyPDF2
+pillow
+google-genai
+python-dotenv
+fpdf2
